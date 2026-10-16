@@ -1,4 +1,5 @@
 import logging
+import socket
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -12,6 +13,9 @@ from cafe_pos.config import settings
 from cafe_pos.database import Base, engine
 
 logger = logging.getLogger("cafe_pos")
+
+# У Docker hostname це ID контейнера, тож за ним видно, яка репліка відповіла.
+INSTANCE_ID = socket.gethostname()
 
 app = FastAPI(
     title=settings.app_name,
@@ -35,6 +39,13 @@ app.mount(
 )
 
 
+@app.middleware("http")
+async def add_instance_header(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Served-By"] = INSTANCE_ID
+    return response
+
+
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     # Повний стектрейс іде тільки в лог сервера.
@@ -54,7 +65,11 @@ def on_startup():
 
 @app.get("/")
 def read_root():
-    return {"message": settings.app_name, "status": "running"}
+    return {
+        "message": settings.app_name,
+        "status": "running",
+        "instance": INSTANCE_ID,
+    }
 
 
 @app.get("/health/db")
