@@ -1,0 +1,29 @@
+# git та IDE
+.git
+.gitignore
+.idea
+.vscode
+.DS_Store
+
+# секрети та локальні налаштування
+.env
+.env.*
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# зайве для робочого образу
+tests/
+loadtests/
+results/
+docs/
+*.md
+.github/
+.pre-commit-config.yaml
+Dockerfile
+docker-compose*.yml
