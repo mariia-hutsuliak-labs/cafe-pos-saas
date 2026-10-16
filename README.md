@@ -201,7 +201,7 @@ pre-commit run --all-files
 
 ## Запуск у Docker
 
-Застосунок і PostgreSQL піднімаються однією командою. Потрібен лише Docker Desktop.
+Застосунок (три репліки), nginx і PostgreSQL піднімаються однією командою. Потрібен лише Docker Desktop.
 
 ### Склад
 
@@ -209,7 +209,9 @@ pre-commit run --all-files
 |---|---|
 | `Dockerfile` | Багатоетапна збірка: етап `builder` ставить залежності у venv, фінальний образ `python:3.9-slim` отримує тільки venv і `src`, працює не від root |
 | `.dockerignore` | Виключає `.git`, `.env*`, `venv`, `__pycache__`, тести, логи та інше зайве |
-| `docker-compose.yml` | Сервіси `web` і `db`, мережа `backend`, том `pgdata`, `healthcheck` та `depends_on` |
+| `docker-compose.yml` | Сервіси `web1`, `web2`, `web3`, `nginx` і `db`, мережа `backend`, том `pgdata`, `healthcheck` та `depends_on` |
+| `nginx/` | Конфіги балансувальника: `nginx.conf` (Round Robin), `nginx.weighted.conf`, `nginx.least_conn.conf` |
+| `scripts/` | Демонстрація розподілу запитів і відмовостійкості |
 | `docker-compose.dev.yml` | Режим розробки: bind mount `./src` і `--reload` |
 | `.env.docker.example` | Шаблон змінних оточення для Docker |
 | `requirements.txt` / `requirements-dev.txt` | Залежності для роботи / додатково інструменти розробки |
@@ -226,13 +228,13 @@ cp .env.docker.example .env
 docker compose up --build
 ```
 
-Перевірка: http://127.0.0.1:8000/health/db повертає `{"database":"connected"}`, фронтенд на http://127.0.0.1:8000/app/index.html. Таблиці створюються при старті застосунку.
+Перевірка: http://127.0.0.1:8080/health/db (через nginx) повертає `{"database":"connected"}`, фронтенд на http://127.0.0.1:8080/app/index.html. Репліка `web1` додатково відкрита напряму на порту 8000. Таблиці створюються при старті застосунку.
 
 Адміністратор і демо-дані (у другій вкладці):
 
 ```bash
-docker compose exec web python -m cafe_pos.create_admin <email> <пароль>
-docker compose exec web python -m cafe_pos.seed_demo_data
+docker compose exec web1 python -m cafe_pos.create_admin <email> <пароль>
+docker compose exec web1 python -m cafe_pos.seed_demo_data
 ```
 
 База даних:
@@ -317,6 +319,109 @@ LOAD_ADMIN_EMAIL=load@example.com LOAD_ADMIN_PASSWORD=loadpass123 locust -f load
 
 - вхід через bcrypt триває близько 200 мс, у кілька разів довше за інші ендпоінти;
 - `GET /analytics/summary` рахує суми в Python, а не в SQL, тому його затримка росте разом з навантаженням.
+
+## Балансування навантаження (Nginx)
+
+Один екземпляр застосунку впирається у свої межі (див. результати навантаження вище), тому застосунок масштабується горизонтально: три однакові репліки `web1`, `web2`, `web3` стоять за nginx, який є єдиною точкою входу.
+
+```mermaid
+graph LR
+    Client[Клієнт] -->|":8080"| N[nginx]
+    N --> W1[web1]
+    N --> W2[web2]
+    N --> W3[web3]
+    W1 --> DB[(PostgreSQL)]
+    W2 --> DB
+    W3 --> DB
+```
+
+Репліки збираються з одного образу й підключені до однієї бази. Токени JWT перевіряє кожна репліка самостійно, тому спільне сховище сесій не потрібне.
+
+### Як видно, яка репліка відповіла
+
+Застосунок повертає ім'я свого сервера (у Docker це ID контейнера) двома способами: поле `instance` у відповіді `GET /` і заголовок `X-Served-By` у кожній відповіді.
+
+```bash
+curl -i http://127.0.0.1:8080/
+```
+
+### Налаштування nginx
+
+У `nginx/nginx.conf` блок `upstream cafe_backend` перелічує три репліки, а блок `server` слухає порт 80 (на комп'ютері це 8080) і передає запити через `proxy_pass`. Без додаткових директив nginx використовує Round Robin: запити йдуть по колу `web1`, `web2`, `web3`.
+
+Відмовостійкість налаштована пасивною перевіркою здоров'я (в open-source nginx активних перевірок немає):
+
+- `max_fails=2 fail_timeout=10s`: після двох невдалих спроб репліка виключається з розподілу на 10 секунд, потім nginx пробує її знову;
+- `proxy_next_upstream error timeout http_502 http_503`: якщо репліка не відповіла, цей самий запит одразу йде на наступну, і клієнт не бачить помилки.
+
+Обмеження: якщо перезапустити сам nginx, поки якась репліка вимкнена, він не стартує, бо не може визначити її адресу. Спершу піднімають усі репліки.
+
+### Round Robin
+
+```bash
+./scripts/rr_demo.sh 20
+```
+
+Скрипт робить 20 запитів і друкує репліку для кожного, а в кінці підсумок. Очікувано: запити чергуються `web1, web2, web3, web1, ...`, підсумок приблизно 7 / 7 / 6.
+
+### Відмовостійкість
+
+```bash
+./scripts/failover_demo.sh
+```
+
+Скрипт показує розподіл на трьох репліках, зупиняє `web2` (`docker compose stop web2`), знову робить запити (усі `HTTP 200`, відповідають тільки `web1` і `web3`), запускає `web2` назад і показує, що вона повернулась у розподіл. У логах nginx видно спроби підключення до зупиненої репліки: `docker compose logs nginx`.
+
+### Інші алгоритми
+
+Конфіг вибирає змінна `NGINX_CONF` у `.env`. Після зміни перестворити лише nginx:
+
+```bash
+NGINX_CONF=./nginx/nginx.weighted.conf docker compose up -d nginx
+./scripts/rr_demo.sh 20
+```
+
+| Файл | Алгоритм | Очікуваний розподіл 20 запитів |
+|---|---|---|
+| `nginx.conf` | Round Robin | 7 / 7 / 6 |
+| `nginx.weighted.conf` | Weighted Round Robin, `weight=3` для `web1` | 12 / 4 / 4 |
+| `nginx.least_conn.conf` | Least Connections | близько 7 / 7 / 6 (запити короткі, тому майже як Round Robin) |
+
+Weighted підходить, коли сервери різної потужності. Least Connections виграє, коли запити різної тривалості (наприклад, важка аналітика поряд із легкими запитами).
+
+### Порівняння з одним екземпляром (Locust)
+
+Той самий сценарій з `loadtests/locustfile.py`, база спільна. Один екземпляр це `web1` напряму (порт 8000), три репліки це nginx (порт 8080). Змінна `NGINX_CONF` має вказувати на `nginx.conf`.
+
+```bash
+docker compose exec web1 python -m cafe_pos.create_admin load@example.com loadpass123
+docker compose exec web1 python -m cafe_pos.seed_demo_data
+```
+
+Один екземпляр:
+
+```bash
+LOAD_ADMIN_EMAIL=load@example.com LOAD_ADMIN_PASSWORD=loadpass123 locust -f loadtests/locustfile.py --host http://127.0.0.1:8000 --headless -u 200 -r 10 -t 2m --csv results/single_u200 --html results/single_u200.html
+```
+
+Три репліки через nginx:
+
+```bash
+LOAD_ADMIN_EMAIL=load@example.com LOAD_ADMIN_PASSWORD=loadpass123 locust -f loadtests/locustfile.py --host http://127.0.0.1:8080 --headless -u 200 -r 10 -t 2m --csv results/lb_u200 --html results/lb_u200.html
+```
+
+Те саме для `-u 100` і `-u 300`. Навантаження контейнерів під час тесту: `docker stats --no-stream`. У Docker Desktop виділи не менше 4 CPU (Settings, Resources), інакше репліки ділять мало ядер, і порівняння буде нечесним.
+
+Результати (заповнити після прогонів, дані з `results/*_stats.csv`, рядок `Aggregated`):
+
+| Користувачів | Конфігурація | RPS | Середня, мс | p95, мс | Помилок |
+|---|---|---|---|---|---|
+| 100 | 1 екземпляр | | | | |
+| 100 | 3 репліки + nginx | | | | |
+| 200 | 1 екземпляр | | | | |
+| 200 | 3 репліки + nginx | | | | |
+| 300 | 1 екземпляр | | | | |
+| 300 | 3 репліки + nginx | | | | |
 
 ## Користувачі, ролі, розмежування доступу
 
