@@ -25,7 +25,7 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements-dev.txt
 
       - name: Lint with ruff
         run: ruff check .
@@ -35,3 +35,20 @@ jobs:
 
       - name: Run tests
         run: pytest -v
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Prepare env file
+        run: cp .env.docker.example .env
+
+      - name: Validate compose files
+        run: |
+          docker compose config -q
+          docker compose -f docker-compose.yml -f docker-compose.dev.yml config -q
+
+      - name: Build image
+        run: docker compose build
