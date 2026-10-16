@@ -97,7 +97,7 @@ git clone https://github.com/mariia-hutsuliak-labs/cafe-pos-saas.git
 cd cafe-pos-saas
 python -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 pre-commit install
 ```
 
@@ -197,6 +197,66 @@ PYTHONPATH=src pytest -v
 
 ```bash
 pre-commit run --all-files
+```
+
+## Запуск у Docker
+
+Застосунок і PostgreSQL піднімаються однією командою. Потрібен лише Docker Desktop.
+
+### Склад
+
+| Файл | Призначення |
+|---|---|
+| `Dockerfile` | Багатоетапна збірка: етап `builder` ставить залежності у venv, фінальний образ `python:3.9-slim` отримує тільки venv і `src`, працює не від root |
+| `.dockerignore` | Виключає `.git`, `.env*`, `venv`, `__pycache__`, тести, логи та інше зайве |
+| `docker-compose.yml` | Сервіси `web` і `db`, мережа `backend`, том `pgdata`, `healthcheck` та `depends_on` |
+| `docker-compose.dev.yml` | Режим розробки: bind mount `./src` і `--reload` |
+| `.env.docker.example` | Шаблон змінних оточення для Docker |
+| `requirements.txt` / `requirements-dev.txt` | Залежності для роботи / додатково інструменти розробки |
+
+### Запуск
+
+```bash
+cp .env.docker.example .env
+```
+
+Відкрий `.env`, зміни `POSTGRES_PASSWORD` і `SECRET_KEY`. Файл `.env` не потрапляє в git.
+
+```bash
+docker compose up --build
+```
+
+Перевірка: http://127.0.0.1:8000/health/db повертає `{"database":"connected"}`, фронтенд на http://127.0.0.1:8000/app/index.html. Таблиці створюються при старті застосунку.
+
+Адміністратор і демо-дані (у другій вкладці):
+
+```bash
+docker compose exec web python -m cafe_pos.create_admin <email> <пароль>
+docker compose exec web python -m cafe_pos.seed_demo_data
+```
+
+База даних:
+
+```bash
+docker compose exec db psql -U cafe_pos -d cafe_pos_docker
+```
+
+### Дані переживають перезапуск
+
+`docker compose down` видаляє контейнери, але не том `pgdata`, тому дані лишаються. Повне очищення разом із даними: `docker compose down -v`.
+
+### Режим розробки з hot-reload
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+```
+
+Папка `src` підключена до контейнера, uvicorn працює з `--reload`: після збереження файлу сервер перезапускається без перезбірки образу. У цьому режимі `DEBUG=true`, тож доступний Swagger.
+
+### Розмір образу
+
+```bash
+docker images
 ```
 
 ## Навантажувальне тестування
