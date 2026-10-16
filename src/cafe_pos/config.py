@@ -5,8 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 
-# Яке середовище запущено: sandbox, production або test.
-# Якщо змінну не задано, беремо sandbox, щоб випадково не торкнутись робочої бази.
+
 APP_ENV = os.getenv("APP_ENV", "sandbox")
 
 

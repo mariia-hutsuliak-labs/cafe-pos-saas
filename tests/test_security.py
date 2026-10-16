@@ -24,7 +24,6 @@ def test_500_hides_stacktrace_from_user(caplog):
     assert response.json() == {"detail": "Внутрішня помилка сервера"}
     assert "Traceback" not in response.text
     assert SECRET_TEXT not in response.text
-    # Стектрейс при цьому потрапив у лог.
     assert SECRET_TEXT in caplog.text
 
 

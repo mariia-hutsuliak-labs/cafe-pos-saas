@@ -13,8 +13,6 @@ from cafe_pos.database import Base, engine
 
 logger = logging.getLogger("cafe_pos")
 
-# Документація (/docs, /redoc) і детальні сторінки помилок потрібні тільки
-# під час розробки. У production (DEBUG=false) вони вимкнені.
 app = FastAPI(
     title=settings.app_name,
     debug=settings.debug,
