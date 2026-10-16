@@ -1,21 +1,25 @@
 # Режим розробки. Запуск:
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+x-web-dev: &web-dev
+  environment:
+    DEBUG: "true"
+  volumes:
+    # Локальний код потрапляє в контейнер без перезбірки образу.
+    - ./src:/app/src
+  command:
+    [
+      "uvicorn",
+      "cafe_pos.main:app",
+      "--host",
+      "0.0.0.0",
+      "--port",
+      "8000",
+      "--reload",
+      "--reload-dir",
+      "/app/src",
+    ]
+
 services:
-  web:
-    environment:
-      DEBUG: "true"
-    volumes:
-      # Локальний код потрапляє в контейнер без перезбірки образу.
-      - ./src:/app/src
-    command:
-      [
-        "uvicorn",
-        "cafe_pos.main:app",
-        "--host",
-        "0.0.0.0",
-        "--port",
-        "8000",
-        "--reload",
-        "--reload-dir",
-        "/app/src",
-      ]
+  web1: *web-dev
+  web2: *web-dev
+  web3: *web-dev

@@ -1,3 +1,27 @@
+# Три однакові репліки застосунку (web1, web2, web3) і nginx перед ними.
+x-web: &web
+  build: .
+  restart: unless-stopped
+  env_file: .env
+  environment:
+    # Хост бази це ім'я сервісу db у внутрішній мережі.
+    DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+  networks:
+    - backend
+  depends_on:
+    db:
+      condition: service_healthy
+  healthcheck:
+    test:
+      - CMD
+      - python
+      - -c
+      - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/db')"
+    interval: 10s
+    timeout: 5s
+    retries: 5
+    start_period: 15s
+
 services:
   db:
     image: postgres:18
@@ -15,30 +39,35 @@ services:
       retries: 10
       start_period: 10s
 
-  web:
-    build: .
-    restart: unless-stopped
-    env_file: .env
-    environment:
-      # Хост бази це ім'я сервісу db у внутрішній мережі.
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+  web1:
+    <<: *web
     ports:
+      # Пряма точка входу в одну репліку: потрібна для порівняння з балансувальником.
       - "${WEB_PORT:-8000}:8000"
+
+  web2:
+    <<: *web
+
+  web3:
+    <<: *web
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "${NGINX_PORT:-8080}:80"
+    volumes:
+      # Алгоритм балансування вибирає змінна NGINX_CONF.
+      - ${NGINX_CONF:-./nginx/nginx.conf}:/etc/nginx/nginx.conf:ro
     networks:
       - backend
     depends_on:
-      db:
+      web1:
         condition: service_healthy
-    healthcheck:
-      test:
-        - CMD
-        - python
-        - -c
-        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/db')"
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
+      web2:
+        condition: service_healthy
+      web3:
+        condition: service_healthy
 
 networks:
   backend:
