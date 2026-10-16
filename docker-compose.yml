@@ -1,0 +1,47 @@
+services:
+  db:
+    image: postgres:18
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      # Іменований том: дані БД живуть окремо від контейнера.
+      - pgdata:/var/lib/postgresql
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  web:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Хост бази це ім'я сервісу db у внутрішній мережі.
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+    ports:
+      - "${WEB_PORT:-8000}:8000"
+    networks:
+      - backend
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/db')"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+networks:
+  backend:
+
+volumes:
+  pgdata:
