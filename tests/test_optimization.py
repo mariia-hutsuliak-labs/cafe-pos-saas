@@ -101,3 +101,70 @@ def test_create_missing_indexes_is_idempotent():
     database.create_missing_indexes()
     names = {i["name"] for i in inspect(database.engine).get_indexes("sales")}
     assert "ix_sales_created_at" in names
+
+
+def test_create_sale_skips_unknown_products(client):
+    headers = make_admin(client, "admin@test.com")
+    cafe_id, coffee_id, _ = seed_catalog(client)
+
+    resp = client.post(
+        "/sales/",
+        json={
+            "cafe_id": cafe_id,
+            "items": [
+                {"product_id": coffee_id, "quantity": 1},
+                {"product_id": 9999, "quantity": 5},
+            ],
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 201
+    assert resp.json()["total_price"] == 70
+
+    last = client.get("/sales/?limit=1", headers=headers).json()[0]
+    assert [i["product"] for i in last["items"]] == ["Лате"]
+
+
+def test_create_sale_same_product_twice(client):
+    headers = make_admin(client, "admin@test.com")
+    cafe_id, coffee_id, _ = seed_catalog(client)
+
+    resp = client.post(
+        "/sales/",
+        json={
+            "cafe_id": cafe_id,
+            "items": [
+                {"product_id": coffee_id, "quantity": 1},
+                {"product_id": coffee_id, "quantity": 2},
+            ],
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 201
+    assert resp.json()["total_price"] == 210
+
+
+def test_login_works_after_releasing_connection(client):
+    client.post(
+        "/auth/register", json={"email": "u@test.com", "password": "Password123"}
+    )
+    bad = client.post(
+        "/auth/login", data={"username": "u@test.com", "password": "wrong"}
+    )
+    missing = client.post(
+        "/auth/login", data={"username": "no@test.com", "password": "Password123"}
+    )
+    ok = client.post(
+        "/auth/login", data={"username": "u@test.com", "password": "Password123"}
+    )
+    assert bad.status_code == 401
+    assert missing.status_code == 401
+    assert ok.status_code == 200 and "access_token" in ok.json()
+
+
+def test_pool_size_comes_from_settings():
+    from cafe_pos.config import settings
+
+    pg_engine = database.make_engine("postgresql://u:p@localhost/db")
+    assert pg_engine.pool.size() == settings.db_pool_size
+    assert pg_engine.pool.timeout() == settings.db_pool_timeout

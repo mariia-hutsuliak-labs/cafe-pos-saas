@@ -39,10 +39,19 @@ def login(
     form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)
 ):
     user = db.query(User).filter(User.email == form_data.username).first()
-    if not user or not verify_password(form_data.password, user.hashed_password):
+    if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Невірна пошта або пароль",
         )
-    token = create_access_token(user.id, user.role)
+    user_id, role, password_hash = user.id, user.role, user.hashed_password
+    # Підключення до бази більше не потрібне. Повертаємо його в пул до bcrypt,
+    # бо перевірка пароля триває ~200 мс і без цього тримала б підключення.
+    db.close()
+    if not verify_password(form_data.password, password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Невірна пошта або пароль",
+        )
+    token = create_access_token(user_id, role)
     return Token(access_token=token)
