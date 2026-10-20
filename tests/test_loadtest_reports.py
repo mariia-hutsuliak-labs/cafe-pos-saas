@@ -157,3 +157,60 @@ def test_update_readme_block_requires_markers(tmp_path):
     readme.write_text("без маркерів", encoding="utf-8")
     with pytest.raises(SystemExit):
         report_common.update_readme_block(readme, "X", "текст")
+
+
+def _step_rows():
+    """Кроки по 100 користувачів: стабільні до 300, на 400 різкий обвал, на 500 короткий
+    сплеск RPS, потім спад до 100 користувачів, де p95 стоїть на 200 мс (вхід)."""
+    rows = []
+    t0 = 10_000
+    # (користувачів, rps, частка помилок, p95)
+    steps = [
+        (100, 40.0, 0.0, 80),
+        (200, 80.0, 0.0, 120),
+        (300, 120.0, 0.0, 90),
+        (400, 10.0, 0.5, 30_000),
+        (500, 300.0, 0.02, 3_000),
+    ]
+    for i, (users, rps, err, p95) in enumerate(steps):
+        for s in range(60):
+            rows.append(
+                {
+                    "ts": t0 + i * 60 + s,
+                    "users": users,
+                    "rps": rps,
+                    "fps": rps * err,
+                    "p95": p95,
+                    "p99": p95 * 2,
+                }
+            )
+    down = t0 + len(steps) * 60
+    for s in range(120):
+        rows.append(
+            {
+                "ts": down + s,
+                "users": 100,
+                "rps": 40.0,
+                "fps": 0.0,
+                "p95": 200,
+                "p99": 200,
+            }
+        )
+    return t0, rows
+
+
+def test_step_peak_is_taken_before_the_break():
+    t0, rows = _step_rows()
+    result = stress_report.analyze_step(rows, t0, 60, 100)
+    assert result["break_step"]["users"] == 400
+    # короткий сплеск 300 RPS після зламу не вважається піком
+    assert result["peak"]["users"] == 300
+    assert result["peak"]["rps"] == pytest.approx(120.0)
+
+
+def test_step_recovery_uses_worst_stable_p95_as_norm():
+    t0, rows = _step_rows()
+    result = stress_report.analyze_step(rows, t0, 60, 100)
+    # норма: найгірший p95 серед стабільних кроків (120) + 100 мс = 220, а p95 200 проходить
+    assert result["baseline_p95"] == pytest.approx(120.0)
+    assert result["recovery_s"] is not None

@@ -129,10 +129,17 @@ def analyze_step(rows, t0, step_s, base_users):
         for w in result
         if not w["broken"] and (break_step is None or w["index"] < break_step["index"])
     ]
-    peak = max(result, key=lambda w: w["rps"])
-    plateau = next(w for w in result if w["rps"] >= 0.97 * peak["rps"])
+    # Пік і плато шукаємо лише серед кроків до зламу: після зламу RPS може
+    # короткочасно рости, коли черга розвантажується, але це не робоча межа.
+    pool = stable or result
+    peak = max(pool, key=lambda w: w["rps"])
+    plateau = next(w for w in pool if w["rps"] >= 0.97 * peak["rps"])
     baseline = result[0]
-    recovery_s, limit = find_recovery(rows, down_ts, baseline["p95"] or 0.0)
+    # Норма затримки: найгірший p95 серед стабільних кроків. Вхід (bcrypt) займає
+    # ~200 мс, тож p95 у вікні легко стрибає з 20 до 200 мс і від одного кроку
+    # до іншого, тому першого кроку для норми замало.
+    baseline_p95 = max((w["p95"] or 0.0) for w in pool)
+    recovery_s, limit = find_recovery(rows, down_ts, baseline_p95)
     return {
         "steps": result,
         "break_step": break_step,
@@ -140,6 +147,7 @@ def analyze_step(rows, t0, step_s, base_users):
         "peak": peak,
         "plateau": plateau,
         "baseline": baseline,
+        "baseline_p95": baseline_p95,
         "down_ts": down_ts,
         "recovery_s": recovery_s,
         "recovery_limit": limit,
@@ -322,10 +330,18 @@ def step_markdown(label, result, args, resources_by_step):
     )
     plateau = result["plateau"]
     md.append("\n##### Точка насичення і точка зламу (Break Point)\n")
-    if len(steps) > 1 and plateau["index"] == steps[-1]["index"]:
-        md.append(
-            f"**Насичення.** Не досягнуто: RPS ріс до останнього кроку ({steps[-1]['users']} користувачів, RPS {fmt(peak['rps'], 1)}). Для пошуку межі збільшіть MAX_USERS.\n\n"
-        )
+    last_ok = stable or steps[-1]
+    if len(steps) > 1 and plateau["index"] == last_ok["index"]:
+        if brk:
+            md.append(
+                f"**Насичення.** До зламу плато не було: RPS ріс до останнього стабільного кроку ({last_ok['users']} користувачів, RPS {fmt(peak['rps'], 1)}), "
+                f"а потім система обрушилась різко, а не поступово. Максимум стабільної роботи: **{fmt(peak['rps'], 1)} RPS**. "
+                f"Робоче навантаження з soak-тесту ({args.work_users} користувачів) це {fmt(100.0 * args.work_users / last_ok['users'], 0)}% від цієї межі.\n\n"
+            )
+        else:
+            md.append(
+                f"**Насичення.** Не досягнуто: RPS ріс до останнього кроку ({steps[-1]['users']} користувачів, RPS {fmt(peak['rps'], 1)}). Для пошуку межі збільшіть MAX_USERS.\n\n"
+            )
     else:
         md.append(
             f"**Насичення.** RPS виходить на плато на кроці {plateau['index']} (**{plateau['users']} користувачів**, RPS {fmt(plateau['rps'], 1)}): далі приріст менший за 3%. "
@@ -348,7 +364,6 @@ def step_markdown(label, result, args, resources_by_step):
         )
     md.append("\n")
     md.append("\n##### Відновлення після перевантаження\n")
-    base = result["baseline"]
     if not result["has_cooldown"]:
         md.append(
             "У цьому прогоні немає фази спаду навантаження, тож час відновлення не виміряно. Запускайте `stress.sh step` без змін: після піку він утримує базове навантаження 3 хвилини."
@@ -364,7 +379,7 @@ def step_markdown(label, result, args, resources_by_step):
         md.append(
             f"Після зниження навантаження до {args.base_users} користувачів затримка і помилки повернулись до норми "
             f"(p95 не більше {fmt(result['recovery_limit'])} мс, помилок не більше {fmt(RECOVERY_ERROR_PCT, 1)}% протягом {RECOVERY_HOLD_S} с) через **{fmt(result['recovery_s'])} с** без втручання. "
-            f"Базовий p95 на першому кроці {fmt(base['p95'])} мс."
+            f"Норма це найгірший p95 серед стабільних кроків: {fmt(result['baseline_p95'])} мс."
         )
     return "\n".join(md) + "\n"
 
