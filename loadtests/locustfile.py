@@ -8,24 +8,54 @@
 Логін і пароль адміна беруться зі змінних оточення, у коді їх немає:
   LOAD_ADMIN_EMAIL, LOAD_ADMIN_PASSWORD
 
+Для тривалих тестів (лаба 8): JWT-токен живе ACCESS_TOKEN_EXPIRE_MINUTES (60 хв),
+тож через годину всі запити були б 401. Змінна LOAD_TOKEN_MAX_AGE_S (секунди)
+вмикає повторний вхід, коли токен старший за цей час, як це робить справжній клієнт.
+За замовчуванням 0: повторного входу немає, короткі тести (лаби 4-7) не змінюються.
+
 Запуск (приклад):
   locust -f loadtests/locustfile.py --host http://127.0.0.1:8000
 """
 
 import os
 import random
+import time
 
 from locust import HttpUser, between, task
 from locust.exception import StopUser
 
 ADMIN_EMAIL = os.getenv("LOAD_ADMIN_EMAIL", "admin@example.com")
 ADMIN_PASSWORD = os.getenv("LOAD_ADMIN_PASSWORD", "admin12345")
+TOKEN_MAX_AGE_S = int(os.getenv("LOAD_TOKEN_MAX_AGE_S", "0"))
 
 
 class CafeBaseUser(HttpUser):
     """Спільна логіка: вхід і підстановка JWT-токена в заголовок."""
 
     abstract = True
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.token_obtained_at = None
+        self._refreshing = False
+        if TOKEN_MAX_AGE_S:
+            self._plain_request = self.client.request
+            self.client.request = self._request_with_fresh_token
+
+    def _request_with_fresh_token(self, method, url, **kwargs):
+        """Перед запитом оновлює токен, якщо він вже старий."""
+        age = (
+            None
+            if self.token_obtained_at is None
+            else time.monotonic() - self.token_obtained_at
+        )
+        if not self._refreshing and age is not None and age > TOKEN_MAX_AGE_S:
+            self._refreshing = True
+            try:
+                self.login()
+            finally:
+                self._refreshing = False
+        return self._plain_request(method, url, **kwargs)
 
     def login(self):
         with self.client.post(
@@ -40,6 +70,7 @@ class CafeBaseUser(HttpUser):
             token = response.json()["access_token"]
             response.success()
         self.client.headers.update({"Authorization": f"Bearer {token}"})
+        self.token_obtained_at = time.monotonic()
         return True
 
 
