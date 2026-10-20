@@ -11,6 +11,11 @@ from cafe_pos import models  # noqa: F401
 from cafe_pos.api import analytics, auth, cafes, products, sales, users
 from cafe_pos.config import settings
 from cafe_pos.database import Base, create_missing_indexes, engine
+from cafe_pos.services.metrics import (
+    MetricsMiddleware,
+    metrics_response,
+    register_pool_metrics,
+)
 
 logger = logging.getLogger("cafe_pos")
 
@@ -24,6 +29,9 @@ app = FastAPI(
     redoc_url="/redoc" if settings.debug else None,
     openapi_url="/openapi.json" if settings.debug else None,
 )
+
+app.add_middleware(MetricsMiddleware)
+register_pool_metrics(engine)
 
 app.include_router(auth.router)
 app.include_router(users.router)
@@ -71,6 +79,12 @@ def read_root():
         "status": "running",
         "instance": INSTANCE_ID,
     }
+
+
+@app.get("/metrics", include_in_schema=False)
+def metrics():
+    # Для Prometheus усередині мережі Docker. Nginx назовні цей шлях не віддає.
+    return metrics_response()
 
 
 @app.get("/health/db")

@@ -12,6 +12,7 @@ from typing import Any, Callable, Optional
 import redis
 
 from cafe_pos.config import settings
+from cafe_pos.services.metrics import CACHE_LOOKUPS
 
 logger = logging.getLogger("cafe_pos")
 
@@ -47,6 +48,7 @@ def _usable_client() -> Optional[Any]:
 def _mark_failed(action: str, exc: Exception) -> None:
     global _disabled_until
     _disabled_until = time.monotonic() + RETRY_AFTER_SECONDS
+    CACHE_LOOKUPS.labels("error").inc()
     logger.warning("Redis недоступний (%s): %s", action, exc)
 
 
@@ -86,7 +88,9 @@ def cached(key: str, ttl_seconds: int, producer: Callable[[], Any]) -> Any:
     """Повертає значення з кешу або обчислює його через producer і кладе в кеш."""
     hit = cache_get(key)
     if hit is not None:
+        CACHE_LOOKUPS.labels("hit").inc()
         return hit
+    CACHE_LOOKUPS.labels("miss").inc()
     value = producer()
     cache_set(key, value, ttl_seconds)
     return value
