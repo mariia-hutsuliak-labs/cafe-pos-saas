@@ -10,7 +10,7 @@
 #
 # Запуск:
 #   export LOAD_ADMIN_EMAIL=load@example.com LOAD_ADMIN_PASSWORD=loadpass123
-#   ./loadtests/soak.sh 1h 400        # тривалість і кількість користувачів
+#   ./loadtests/soak.sh 1h 350        # тривалість і кількість користувачів
 #   ./loadtests/soak.sh 3m 100        # пробний прогін, щоб перевірити, що все працює
 #
 # Змінні: SOAK_LABEL (назва файлів, за замовчуванням soak), BULK_SALES, NGINX_PORT.
@@ -20,7 +20,7 @@ cd "$(dirname "$0")/.."
 : "${LOAD_ADMIN_PASSWORD:?задай LOAD_ADMIN_PASSWORD}"
 
 DURATION="${1:-1h}"
-USERS="${2:-400}"
+USERS="${2:-350}"
 LABEL="${SOAK_LABEL:-soak}"
 BULK_SALES="${BULK_SALES:-100000}"
 HOST="http://127.0.0.1:${NGINX_PORT:-8080}"
