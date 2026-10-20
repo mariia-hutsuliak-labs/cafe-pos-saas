@@ -1,7 +1,16 @@
 # Три однакові репліки застосунку (web1, web2, web3) і nginx перед ними.
+# Логи контейнерів не ростуть безмежно: до 3 файлів по 10 МБ на контейнер.
+# Без цього за години тесту логи запитів можуть заповнити диск.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 x-web: &web
   build: .
   restart: unless-stopped
+  logging: *default-logging
   env_file: .env
   environment:
     # Хост бази це ім'я сервісу db у внутрішній мережі.
@@ -30,6 +39,7 @@ services:
   db:
     image: postgres:18
     restart: unless-stopped
+    logging: *default-logging
     # Три репліки по 40 підключень у пулі це 120, а за замовчуванням дозволено 100.
     command: ["postgres", "-c", "max_connections=200"]
     env_file: .env
@@ -48,6 +58,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    logging: *default-logging
     # Кеш без збереження на диск, до 64 МБ, найстаріші ключі витісняються.
     command: ["redis-server", "--save", "", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
     networks:
@@ -73,6 +84,7 @@ services:
   nginx:
     image: nginx:1.27-alpine
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - "${NGINX_PORT:-8080}:80"
     volumes:
