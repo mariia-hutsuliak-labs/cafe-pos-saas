@@ -214,3 +214,36 @@ def test_step_recovery_uses_worst_stable_p95_as_norm():
     # норма: найгірший p95 серед стабільних кроків (120) + 100 мс = 220, а p95 200 проходить
     assert result["baseline_p95"] == pytest.approx(120.0)
     assert result["recovery_s"] is not None
+
+
+def test_spike_baseline_excludes_the_ramp_up():
+    rows = []
+    t0 = 20_000
+
+    def add(ts, users, rps, err, p95):
+        rows.append(
+            {
+                "ts": ts,
+                "users": users,
+                "rps": rps,
+                "fps": rps * err,
+                "p95": p95,
+                "p99": p95,
+            }
+        )
+
+    for s in range(120):  # 2 хв на 150 користувачах
+        add(t0 + s, 150, 64.0, 0.0, 120)
+    for s in range(10):  # розгін до 900
+        add(t0 + 120 + s, 150 + 75 * (s + 1), 40.0, 0.1, 5_000)
+    for s in range(60):  # пік
+        add(t0 + 130 + s, 900, 20.0, 0.4, 30_000)
+    for s in range(120):  # спад
+        add(t0 + 190 + s, 150, 60.0, 0.0, 150)
+    result = stress_report.analyze_spike(rows, t0, 150)
+    assert result["baseline"]["users_median"] == 150
+    assert result["baseline"]["p95"] == pytest.approx(120.0)
+    assert result["spike"]["users"] == 900
+    # норма це найгірший p95 до піку, а не середнє
+    assert result["baseline_p95"] == pytest.approx(120.0)
+    assert result["recovery_s"] is not None

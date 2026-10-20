@@ -66,6 +66,7 @@ def window_stats(rows):
         "p95": mean([r["p95"] for r in rows if r["p95"]]),
         "p99": mean([r["p99"] for r in rows if r["p99"]]),
         "users": max((r["users"] for r in rows), default=0),
+        "users_median": sorted(r["users"] for r in rows)[len(rows) // 2] if rows else 0,
     }
 
 
@@ -161,9 +162,11 @@ def analyze_spike(rows, t0, base_users):
     before_peak = sorted(r["users"] for r in rows if t0 + 10 <= r["ts"] < first_peak_ts)
     base = before_peak[len(before_peak) // 2] if before_peak else base_users
     middle = base + 0.5 * (peak_users - base)
-    start_ts = next(r["ts"] for r in rows if r["users"] > middle)
+    # Початок піку: перший момент, коли користувачів стало більше за базу
+    # (розгін теж частина піку, його не рахуємо до «норми»).
+    start_ts = next(r["ts"] for r in rows if r["users"] > base)
     end_ts = next(
-        (r["ts"] for r in rows if r["ts"] > start_ts and r["users"] <= middle),
+        (r["ts"] for r in rows if r["ts"] > first_peak_ts and r["users"] <= middle),
         rows[-1]["ts"],
     )
     before = [r for r in rows if start_ts - 60 <= r["ts"] < start_ts]
@@ -174,7 +177,10 @@ def analyze_spike(rows, t0, base_users):
     worst_error = max(
         (100.0 * (r["fps"] or 0) / r["rps"] for r in during if r["rps"]), default=0
     )
-    recovery_s, limit = find_recovery(rows, end_ts, baseline["p95"] or 0.0)
+    # Норма: найгірший p95 за вікно до піку. Вхід (bcrypt) займає ~200 мс, тому
+    # p95 у 10-секундних вікнах стрибає між 10 і 200 мс, а середнє (98 мс) це не норма.
+    baseline_p95 = max((r["p95"] or 0.0 for r in before), default=0.0)
+    recovery_s, limit = find_recovery(rows, end_ts, baseline_p95)
     after = [r for r in rows if r["ts"] >= end_ts + (recovery_s or 0) + RECOVERY_HOLD_S]
     return {
         "base_users": base,
@@ -182,6 +188,7 @@ def analyze_spike(rows, t0, base_users):
         "start_ts": start_ts,
         "end_ts": end_ts,
         "baseline": baseline,
+        "baseline_p95": baseline_p95,
         "spike": spike,
         "worst_p95": worst_p95,
         "worst_error": worst_error,
@@ -393,7 +400,7 @@ def spike_markdown(result, args):
     rows = [
         [
             "До піку",
-            fmt(b["users"]),
+            fmt(b["users_median"]),
             fmt(b["rps"], 1),
             fmt(b["p95"]),
             fmt(b["p99"]),
@@ -412,7 +419,7 @@ def spike_markdown(result, args):
         rows.append(
             [
                 "Після відновлення",
-                fmt(a["users"]),
+                fmt(a["users_median"]),
                 fmt(a["rps"], 1),
                 fmt(a["p95"]),
                 fmt(a["p99"]),
@@ -422,6 +429,12 @@ def spike_markdown(result, args):
     md.append(
         table(["Фаза", "Користувачів", "RPS", "p95, мс", "p99, мс", "Помилок"], rows)
     )
+    if a and b["users_median"] and a["users_median"] < 0.95 * b["users_median"]:
+        md.append(
+            f"\n\nПісля піку працює {fmt(a['users_median'])} користувачів замість {fmt(b['users_median'])}: "
+            "під час перевантаження сервер відповідав помилкою, і частина користувачів Locust завершилась на старті, "
+            "а Locust їх не повертає. Тому RPS після піку нижчий пропорційно, а на затримку і помилки це не впливає."
+        )
     md.append(
         f"\n\nНайгірші значення під час піку: p95 до {fmt(result['worst_p95'])} мс (за 10-секундними вікнами), частка помилок до {fmt(result['worst_error'], 1)}%.\n"
     )
