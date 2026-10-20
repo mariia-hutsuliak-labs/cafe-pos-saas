@@ -44,6 +44,26 @@ def test_short_series_is_not_judged():
     assert result["ok"] is None
 
 
+def test_db_memory_growth_with_data_is_explained():
+    memory = {"db": {"ok": False, "verdict": "росте весь час (підозра на витік)"}}
+    soak_report.explain_data_growth(memory, [100_000, 200_000, 320_000])
+    assert memory["db"]["ok"] is True
+    assert memory["db"]["explained"] is True
+    assert "×3.2" in memory["db"]["verdict"]
+
+
+def test_db_memory_growth_without_data_growth_stays_a_leak():
+    memory = {"db": {"ok": False, "verdict": "росте весь час (підозра на витік)"}}
+    soak_report.explain_data_growth(memory, [100_000, 101_000, 102_000])
+    assert memory["db"]["ok"] is False
+
+
+def test_web_memory_growth_is_never_explained_by_data():
+    memory = {"web1": {"ok": False, "verdict": "росте весь час (підозра на витік)"}}
+    soak_report.explain_data_growth(memory, [100_000, 400_000])
+    assert memory["web1"]["ok"] is False
+
+
 def test_latency_degradation_is_detected():
     minutes = [
         {"minute": m + 0.5, "avg": 20 + m, "p95": 100 + 5 * m, "p99": 150 + 6 * m}

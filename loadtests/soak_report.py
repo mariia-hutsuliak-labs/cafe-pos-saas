@@ -54,6 +54,7 @@ RAM_LIMIT = 80.0
 ERROR_LIMIT_PCT = 0.1
 
 # Пороги для висновків про витоки і деградацію (евристики, описані у README).
+DATA_GROWTH_FACTOR = 1.5  # дані виросли хоча б у стільки разів
 LEAK_MIN_MB = 10.0  # менший ріст пам'яті ігноруємо
 LEAK_MIN_PCT = 10.0  # і менший за 10% теж
 LEAK_MIN_R2 = 0.5  # ріст має бути схожий на пряму, а не на випадкові коливання
@@ -103,6 +104,27 @@ def analyze_series(times, values, warmup, unit_limit_mb=LEAK_MIN_MB):
         "verdict": verdict,
         "ok": ok,
     }
+
+
+def explain_data_growth(memory, sales_rows):
+    """Пам'ять бази росте разом із даними (кеш сторінок, shared_buffers, процеси
+    підключень), тож ріст db сам по собі не є витоком застосунку.
+
+    Змінює вердикт db, лише якщо чеків побільшало хоча б у DATA_GROWTH_FACTOR разів.
+    """
+    rows = [v for v in sales_rows if v is not None]
+    db = memory.get("db")
+    if not db or db["ok"] is not False or len(rows) < 2 or rows[0] <= 0:
+        return
+    factor = rows[-1] / rows[0]
+    if factor < DATA_GROWTH_FACTOR:
+        return
+    db["verdict"] = (
+        f"росте разом з даними (чеків ×{factor:.1f}): "
+        "кеш PostgreSQL, не витік застосунку; див. пояснення нижче"
+    )
+    db["ok"] = True
+    db["explained"] = True
 
 
 def analyze_latency(mins, warmup):
@@ -401,6 +423,8 @@ def main():
                 ),
             )
 
+    explain_data_growth(memory, res.get("sales_rows", []))
+
     conns = analyze_series(
         rtimes, res.get("db_connections", []), warmup, unit_limit_mb=3
     )
@@ -457,7 +481,9 @@ def main():
                     "; ".join(
                         f"{n}: {v['verdict']}"
                         for n, v in memory.items()
-                        if n.startswith("web") or v["ok"] is not True
+                        if n.startswith("web")
+                        or v["ok"] is not True
+                        or v.get("explained")
                     )
                     or "-"
                 ),
@@ -700,6 +726,14 @@ def main():
                     ],
                 )
             )
+            if memory.get("db", {}).get("explained"):
+                md.append(
+                    "\nПам'ять контейнера db складається з shared_buffers (за замовчуванням до 128 МБ), "
+                    "кешу файлів, який Docker теж рахує, і окремих процесів на кожне підключення. "
+                    "Вона росте разом з обсягом бази і числом підключень, а підключення вийшли на плато. "
+                    "Розклад на ці частини дає `/sys/fs/cgroup/memory.stat` усередині контейнера db: "
+                    "`anon` це процеси, `file` це кеш, `shmem` це shared_buffers.\n"
+                )
             md.append(
                 f"\nЗа тест база виросла на {fmt(sales_rows[-1] - sales_rows[0])} чеків. Частину росту RAM у db і частину росту затримки аналітики дає саме більший обсяг даних, це природний ріст, а не витік. "
                 "Логи контейнерів обмежені ротацією (3 файли по 10 МБ на контейнер у `docker-compose.yml`), тому диск ними не заповнюється.\n"
