@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from typing import Optional
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -12,7 +13,7 @@ APP_ENV = os.getenv("APP_ENV", "sandbox")
 class Settings(BaseSettings):
     app_env: str = APP_ENV
     debug: bool = False
-    app_name: str = "Cloud POS для мережі кав'ярень"
+    app_name: str = "Cloud POS для мережі кав'ярень DEV"
 
     # Ці два поля без значень за замовчуванням: без них застосунок не стартує.
     database_url: str
@@ -23,6 +24,11 @@ class Settings(BaseSettings):
     db_pool_size: int = 20
     db_max_overflow: int = 20
     db_pool_timeout: int = 10
+
+    # Кеш Redis. Порожнє значення вимикає кеш.
+    redis_url: Optional[str] = None
+    cache_ttl_seconds: int = 30
+    cache_ttl_summary_seconds: int = 10
 
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 60

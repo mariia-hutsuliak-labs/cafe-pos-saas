@@ -6,10 +6,14 @@ x-web: &web
   environment:
     # Хост бази це ім'я сервісу db у внутрішній мережі.
     DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+    # Кеш. Порожній REDIS_URL вимикає кеш: REDIS_URL= docker compose up -d
+    REDIS_URL: ${REDIS_URL-redis://redis:6379/0}
   networks:
     - backend
   depends_on:
     db:
+      condition: service_healthy
+    redis:
       condition: service_healthy
   healthcheck:
     test:
@@ -40,6 +44,19 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # Кеш без збереження на диск, до 64 МБ, найстаріші ключі витісняються.
+    command: ["redis-server", "--save", "", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   web1:
     <<: *web
