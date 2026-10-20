@@ -6,7 +6,25 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 
 from cafe_pos.config import settings
 
-engine = create_engine(settings.database_url)
+
+def make_engine(url: str):
+    """Створює engine. Для PostgreSQL розмір пулу береться з налаштувань.
+
+    За замовчуванням SQLAlchemy дає 5 + 10 підключень і чекає вільне 30 секунд.
+    Під навантаженням запити стають у чергу за підключенням, а потім падають з 500.
+    SQLite (тести) не підтримує ці параметри.
+    """
+    if url.startswith("sqlite"):
+        return create_engine(url)
+    return create_engine(
+        url,
+        pool_size=settings.db_pool_size,
+        max_overflow=settings.db_max_overflow,
+        pool_timeout=settings.db_pool_timeout,
+    )
+
+
+engine = make_engine(settings.database_url)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
