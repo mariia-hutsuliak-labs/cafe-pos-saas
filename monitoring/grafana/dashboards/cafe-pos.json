@@ -163,7 +163,7 @@
       "id": 4,
       "type": "stat",
       "title": "CPU системи Docker, %",
-      "description": "Сума CPU контейнерів, поділена на всі ядра. Поріг 80%.",
+      "description": "Уся віртуальна машина Docker (cAdvisor, id=\"/\"), у відсотках від її ядер і пам'яті. Поріг 80%.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -180,7 +180,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(rate(container_cpu_usage_seconds_total{name!=\"\"}[$__rate_interval])) / scalar(machine_cpu_cores) * 100",
+          "expr": "rate(container_cpu_usage_seconds_total{id=\"/\"}[$__rate_interval]) / scalar(machine_cpu_cores) * 100",
           "legendFormat": "",
           "refId": "A",
           "editorMode": "code",
@@ -227,7 +227,7 @@
       "id": 5,
       "type": "stat",
       "title": "RAM системи Docker, %",
-      "description": "Сума RAM контейнерів, поділена на пам'ять Docker. Поріг 80%.",
+      "description": "Уся віртуальна машина Docker (cAdvisor, id=\"/\"), у відсотках від її ядер і пам'яті. Поріг 80%.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -244,7 +244,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(container_memory_working_set_bytes{name!=\"\"}) / scalar(machine_memory_bytes) * 100",
+          "expr": "container_memory_working_set_bytes{id=\"/\"} / scalar(machine_memory_bytes) * 100",
           "legendFormat": "",
           "refId": "A",
           "editorMode": "code",
@@ -576,7 +576,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(rate(container_cpu_usage_seconds_total{name!=\"\"}[$__rate_interval])) / scalar(machine_cpu_cores) * 100",
+          "expr": "rate(container_cpu_usage_seconds_total{id=\"/\"}[$__rate_interval]) / scalar(machine_cpu_cores) * 100",
           "legendFormat": "CPU",
           "refId": "A",
           "editorMode": "code",
@@ -649,7 +649,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(container_memory_working_set_bytes{name!=\"\"}) / scalar(machine_memory_bytes) * 100",
+          "expr": "container_memory_working_set_bytes{id=\"/\"} / scalar(machine_memory_bytes) * 100",
           "legendFormat": "RAM",
           "refId": "A",
           "editorMode": "code",
@@ -704,7 +704,7 @@
     {
       "id": 14,
       "type": "timeseries",
-      "title": "CPU за контейнерами, ядер",
+      "title": "CPU за репліками web, ядер",
       "description": "",
       "datasource": {
         "type": "prometheus",
@@ -722,8 +722,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (name) (rate(container_cpu_usage_seconds_total{name!=\"\"}[$__rate_interval]))",
-          "legendFormat": "{{name}}",
+          "expr": "sum by (instance) (rate(process_cpu_seconds_total{job=\"web\"}[$__rate_interval]))",
+          "legendFormat": "{{instance}}",
           "refId": "A",
           "editorMode": "code",
           "range": true
@@ -759,7 +759,7 @@
     {
       "id": 15,
       "type": "timeseries",
-      "title": "RAM за контейнерами",
+      "title": "RAM за репліками web (процес застосунку)",
       "description": "Лінія, що росте без повернення, це ознака витоку пам'яті.",
       "datasource": {
         "type": "prometheus",
@@ -777,8 +777,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (name) (container_memory_working_set_bytes{name!=\"\"})",
-          "legendFormat": "{{name}}",
+          "expr": "sum by (instance) (process_resident_memory_bytes{job=\"web\"})",
+          "legendFormat": "{{instance}}",
           "refId": "A",
           "editorMode": "code",
           "range": true
