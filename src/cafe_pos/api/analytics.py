@@ -4,12 +4,14 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from cafe_pos.config import settings
 from cafe_pos.database import get_db
 from cafe_pos.models.cafe import Cafe
 from cafe_pos.models.product import Product
 from cafe_pos.models.sale import Sale, SaleItem
 from cafe_pos.models.user import User, UserRole
 from cafe_pos.services.auth_service import require_role
+from cafe_pos.services.cache import cached
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
@@ -19,6 +21,14 @@ def summary(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.admin)),
 ):
+    return cached(
+        "analytics:summary",
+        settings.cache_ttl_summary_seconds,
+        lambda: build_summary(db),
+    )
+
+
+def build_summary(db: Session):
     today = datetime.now(timezone.utc).date()
     day_start = datetime(today.year, today.month, today.day, tzinfo=timezone.utc)
     day_end = day_start + timedelta(days=1)
@@ -45,6 +55,14 @@ def revenue_by_day(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.admin)),
 ):
+    return cached(
+        f"analytics:revenue-by-day:{days}",
+        settings.cache_ttl_seconds,
+        lambda: build_revenue_by_day(db, days),
+    )
+
+
+def build_revenue_by_day(db: Session, days: int):
     since = datetime.now(timezone.utc) - timedelta(days=days)
     rows = (
         db.query(
@@ -65,6 +83,14 @@ def top_products(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.admin)),
 ):
+    return cached(
+        f"analytics:top-products:{limit}",
+        settings.cache_ttl_seconds,
+        lambda: build_top_products(db, limit),
+    )
+
+
+def build_top_products(db: Session, limit: int):
     rows = (
         db.query(
             Product.name,
@@ -88,6 +114,14 @@ def revenue_by_cafe(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.admin)),
 ):
+    return cached(
+        "analytics:by-cafe",
+        settings.cache_ttl_seconds,
+        lambda: build_revenue_by_cafe(db),
+    )
+
+
+def build_revenue_by_cafe(db: Session):
     rows = (
         db.query(Cafe.name, func.sum(Sale.total_price).label("revenue"))
         .join(Sale, Sale.cafe_id == Cafe.id)

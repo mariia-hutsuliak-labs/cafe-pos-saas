@@ -168,3 +168,104 @@ def test_pool_size_comes_from_settings():
     pg_engine = database.make_engine("postgresql://u:p@localhost/db")
     assert pg_engine.pool.size() == settings.db_pool_size
     assert pg_engine.pool.timeout() == settings.db_pool_timeout
+
+
+class FakeRedis:
+    """Мінімальна заміна Redis для тестів: словник без реального TTL."""
+
+    def __init__(self):
+        self.data = {}
+        self.sets = 0
+
+    def get(self, key):
+        return self.data.get(key)
+
+    def setex(self, key, ttl, value):
+        self.sets += 1
+        self.data[key] = value
+
+    def delete(self, *keys):
+        for key in keys:
+            self.data.pop(key, None)
+
+
+class BrokenRedis:
+    def get(self, key):
+        raise ConnectionError("redis is down")
+
+    def setex(self, key, ttl, value):
+        raise ConnectionError("redis is down")
+
+    def delete(self, *keys):
+        raise ConnectionError("redis is down")
+
+
+def use_cache(monkeypatch, fake):
+    from cafe_pos.services import cache
+
+    monkeypatch.setattr(cache, "_client", fake)
+    monkeypatch.setattr(cache, "_disabled_until", 0.0)
+
+
+def test_summary_is_served_from_cache(client, monkeypatch):
+    fake = FakeRedis()
+    use_cache(monkeypatch, fake)
+    headers = make_admin(client, "admin@test.com")
+    cafe_id, coffee_id, _ = seed_catalog(client)
+
+    first = client.get("/analytics/summary", headers=headers).json()
+    assert first["today_orders"] == 0
+    assert "analytics:summary" in fake.data
+
+    client.post(
+        "/sales/",
+        json={"cafe_id": cafe_id, "items": [{"product_id": coffee_id, "quantity": 1}]},
+        headers=headers,
+    )
+    # У межах TTL відповідь береться з кешу, тому новий чек ще не видно.
+    second = client.get("/analytics/summary", headers=headers).json()
+    assert second == first
+
+
+def test_products_cache_is_invalidated_on_change(client, monkeypatch):
+    fake = FakeRedis()
+    use_cache(monkeypatch, fake)
+    headers = make_admin(client, "admin@test.com")
+
+    assert client.get("/products/", headers=headers).json() == []
+    assert "products:list" in fake.data
+
+    created = client.post(
+        "/products/",
+        json={"name": "Лате", "category": "Напій", "price": 70},
+        headers=headers,
+    )
+    assert created.status_code == 201
+    assert "products:list" not in fake.data
+
+    listed = client.get("/products/", headers=headers).json()
+    assert [p["name"] for p in listed] == ["Лате"]
+
+
+def test_cafes_cache_is_invalidated_on_change(client, monkeypatch):
+    fake = FakeRedis()
+    use_cache(monkeypatch, fake)
+    headers = make_admin(client, "admin@test.com")
+
+    assert client.get("/cafes/", headers=headers).json() == []
+    client.post(
+        "/cafes/", json={"name": "Нова", "address": "вул. Нова, 1"}, headers=headers
+    )
+    assert [c["name"] for c in client.get("/cafes/", headers=headers).json()] == [
+        "Нова"
+    ]
+
+
+def test_app_works_when_redis_is_down(client, monkeypatch):
+    use_cache(monkeypatch, BrokenRedis())
+    headers = make_admin(client, "admin@test.com")
+    seed_catalog(client)
+
+    assert client.get("/products/", headers=headers).status_code == 200
+    assert client.get("/analytics/summary", headers=headers).status_code == 200
+    assert client.get("/analytics/by-cafe", headers=headers).status_code == 200

@@ -3,12 +3,16 @@ from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from cafe_pos.config import settings
 from cafe_pos.database import get_db
 from cafe_pos.models.cafe import Cafe
 from cafe_pos.models.user import User, UserRole
 from cafe_pos.services.auth_service import get_current_user, require_role
+from cafe_pos.services.cache import cache_delete, cached
 
 router = APIRouter(prefix="/cafes", tags=["cafes"])
+
+CAFES_CACHE_KEY = "cafes:list"
 
 
 class CafeCreate(BaseModel):
@@ -25,7 +29,11 @@ def cafe_dict(c: Cafe):
 def list_cafes(
     db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
 ):
-    return [cafe_dict(c) for c in db.query(Cafe).all()]
+    return cached(
+        CAFES_CACHE_KEY,
+        settings.cache_ttl_seconds,
+        lambda: [cafe_dict(c) for c in db.query(Cafe).all()],
+    )
 
 
 @router.post("/", status_code=201)
@@ -38,6 +46,7 @@ def create_cafe(
     db.add(cafe)
     db.commit()
     db.refresh(cafe)
+    cache_delete(CAFES_CACHE_KEY)
     return cafe_dict(cafe)
 
 
@@ -56,6 +65,7 @@ def update_cafe(
     cafe.timezone = cafe_in.timezone
     db.commit()
     db.refresh(cafe)
+    cache_delete(CAFES_CACHE_KEY)
     return cafe_dict(cafe)
 
 
@@ -71,6 +81,7 @@ def delete_cafe(
     try:
         db.delete(cafe)
         db.commit()
+        cache_delete(CAFES_CACHE_KEY)
     except IntegrityError:
         db.rollback()
         raise HTTPException(
