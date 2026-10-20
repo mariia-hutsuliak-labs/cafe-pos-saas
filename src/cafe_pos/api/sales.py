@@ -61,26 +61,31 @@ def create_sale(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.admin)),
 ):
-    sale = Sale(cafe_id=sale_in.cafe_id, total_price=0)
-    db.add(sale)
-    db.flush()
+    # Усі товари чека одним запитом (раніше був окремий SELECT на кожну позицію).
+    product_ids = {item.product_id for item in sale_in.items}
+    products = {
+        p.id: p for p in db.query(Product).filter(Product.id.in_(product_ids)).all()
+    }
 
     total = 0.0
+    items = []
     for item in sale_in.items:
-        product = db.get(Product, item.product_id)
+        product = products.get(item.product_id)
         if not product:
             continue
         total += product.price * item.quantity
-        db.add(
+        items.append(
             SaleItem(
-                sale_id=sale.id,
                 product_id=product.id,
                 quantity=item.quantity,
                 unit_price=product.price,
             )
         )
 
-    sale.total_price = round(total, 2)
+    # Чек і позиції зберігаються разом, без проміжного flush, UPDATE і refresh.
+    sale = Sale(cafe_id=sale_in.cafe_id, total_price=round(total, 2), items=items)
+    db.add(sale)
+    db.flush()
+    result = {"id": sale.id, "total_price": sale.total_price}
     db.commit()
-    db.refresh(sale)
-    return {"id": sale.id, "total_price": sale.total_price}
+    return result
