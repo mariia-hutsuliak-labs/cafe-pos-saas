@@ -10,7 +10,7 @@ from sqlalchemy import text
 from cafe_pos import models  # noqa: F401
 from cafe_pos.api import analytics, auth, cafes, products, sales, users
 from cafe_pos.config import settings
-from cafe_pos.database import Base, engine
+from cafe_pos.database import Base, create_missing_indexes, engine
 
 logger = logging.getLogger("cafe_pos")
 
@@ -61,6 +61,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 @app.on_event("startup")
 def on_startup():
     Base.metadata.create_all(bind=engine)
+    create_missing_indexes()
 
 
 @app.get("/")

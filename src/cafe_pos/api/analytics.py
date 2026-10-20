@@ -20,9 +20,15 @@ def summary(
     current_user: User = Depends(require_role(UserRole.admin)),
 ):
     today = datetime.now(timezone.utc).date()
-    today_sales = db.query(Sale).filter(func.date(Sale.created_at) == today).all()
-    today_revenue = sum(s.total_price for s in today_sales)
-    today_orders = len(today_sales)
+    day_start = datetime(today.year, today.month, today.day, tzinfo=timezone.utc)
+    day_end = day_start + timedelta(days=1)
+    # Кількість і суму рахує база за діапазоном created_at, тож працює індекс,
+    # а у Python не завантажуються тисячі чеків.
+    today_orders, today_revenue = (
+        db.query(func.count(Sale.id), func.coalesce(func.sum(Sale.total_price), 0))
+        .filter(Sale.created_at >= day_start, Sale.created_at < day_end)
+        .one()
+    )
     avg_check = today_revenue / today_orders if today_orders else 0
     return {
         "today_revenue": round(today_revenue, 2),
